@@ -1,0 +1,189 @@
+import hashlib
+import os
+from pathlib import Path
+import queue
+import re
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+from embit import base58, ec
+
+from .core import CREATE_NO_WINDOW, ROOT, RUNTIME_HASH, TOOL_HASH, sha256
+
+P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
+GX = 0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798
+GY = 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8
+ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+SPEED = re.compile(r"([0-9.]+)\s*MKey/s")
+TOTAL = re.compile(r"\(([0-9,]+) total\)")
+
+
+def hardware():
+    try:
+        p = subprocess.run(["nvidia-smi", "--id=0",
+            "--query-gpu=name,driver_version,temperature.gpu,utilization.gpu,memory.used,power.draw",
+            "--format=csv,noheader,nounits"], capture_output=True, text=True,
+            timeout=4, creationflags=CREATE_NO_WINDOW)
+        values = [s.strip() for s in p.stdout.strip().split(",")]
+        if p.returncode or len(values) != 6:
+            return {"available": False}
+        return dict(zip(("name", "driver", "temperature", "utilization", "memory_mb", "power_w"), values),
+                    available=True)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"available": False}
+
+
+def detect_gpu():
+    if os.name != "nt":
+        return {"available": False, "reason": "此发行版仅打包 Windows CUDA 引擎"}
+    tool, runtime = ROOT / "vendor/cuBitCrack.exe", ROOT / "vendor/cudart64_101.dll"
+    if not tool.exists() or not runtime.exists() or sha256(tool) != TOOL_HASH or sha256(runtime) != RUNTIME_HASH:
+        return {"available": False, "reason": "CUDA 引擎文件缺失或校验不匹配"}
+    try:
+        p = subprocess.run([str(tool), "--list-devices"], capture_output=True, text=True,
+                           timeout=8, creationflags=CREATE_NO_WINDOW)
+        if p.returncode or "ID:" not in p.stdout:
+            return {"available": False, "reason": "未找到兼容 CUDA 设备；将使用 CPU"}
+        return {"available": True, "details": p.stdout.strip(), **hardware()}
+    except (OSError, subprocess.TimeoutExpired):
+        return {"available": False, "reason": "CUDA 检测未完成；将使用 CPU"}
+
+
+def _next_point(x, y):
+    if x == GX:
+        if (y + GY) % P == 0:
+            raise ValueError("curve infinity")
+        slope = 3 * x * x * pow(2 * y, -1, P) % P
+    else:
+        slope = (GY - y) * pow((GX - x) % P, -1, P) % P
+    nx = (slope * slope - x - GX) % P
+    return nx, (slope * (x - nx) - y) % P
+
+
+def cpu_scan(start, end, target, should_stop, progress):
+    target_hash = base58.decode_check(target)[1:]
+    key = ec.PrivateKey(start.to_bytes(32, "big"), compressed=False)
+    sec = key.get_public_key().sec()
+    x, y = int.from_bytes(sec[1:33], "big"), int.from_bytes(sec[33:], "big")
+    scalar, last_key, last_time = start, start, time.monotonic()
+    while scalar <= end:
+        public_key = bytes([2 | (y & 1)]) + x.to_bytes(32, "big")
+        candidate_hash = hashlib.new("ripemd160", hashlib.sha256(public_key).digest()).digest()
+        if candidate_hash == target_hash:
+            return {"next": scalar, "found": scalar, "backend": "CPU"}
+        scalar += 1
+        if scalar & 511 == 0:
+            current = time.monotonic()
+            if current - last_time >= 0.5:
+                progress(scalar, (scalar - last_key) / (current - last_time))
+                last_key, last_time = scalar, current
+            if should_stop():
+                progress(scalar, 0)
+                return {"next": scalar, "found": None, "backend": "CPU"}
+        if scalar <= end:
+            x, y = _next_point(x, y)
+    progress(end + 1, 0)
+    return {"next": end + 1, "found": None, "backend": "CPU"}
+
+
+def gpu_scan(start, end, target, directory, should_stop, progress, log, parameters=(64, 128, 128)):
+    from winpty import PtyProcess
+    directory = Path(directory).resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    found = directory / ("candidate-" + str(time.time_ns()) + ".found.txt")
+    b, t, points = parameters
+    command = [str(ROOT / "vendor/cuBitCrack.exe"), "-d", "0", "-b", str(b), "-t", str(t),
+               "-p", str(points), "-c", "-f", "--keyspace", f"{start:X}:{end:X}",
+               "-o", str(found), target]
+    console = PtyProcess.spawn(command, cwd=str(directory), dimensions=(30, 240))
+    pending, exited = queue.Queue(), None
+    next_key, reached_end, was_stopped = start, False, False
+
+    def reader():
+        buffer = ""
+        try:
+            while True:
+                text = console.read(4096)
+                for char in text:
+                    if char in "\r\n":
+                        if buffer:
+                            pending.put(ANSI.sub("", buffer))
+                            buffer = ""
+                    else:
+                        buffer += char
+        except (EOFError, OSError):
+            if buffer:
+                pending.put(ANSI.sub("", buffer))
+            pending.put(None)
+
+    threading.Thread(target=reader, name="cuda-output", daemon=True).start()
+    try:
+        while True:
+            alive = console.isalive()
+            if alive and should_stop():
+                was_stopped = True
+                os.kill(console.pid, signal.SIGTERM)
+            if not alive:
+                if exited is None:
+                    exited = time.monotonic()
+                elif time.monotonic() - exited > 1 and pending.empty():
+                    break
+            try:
+                line = pending.get(timeout=0.15)
+            except queue.Empty:
+                continue
+            if line is None:
+                break
+            # With -o the tool logs only the destination filename, not the found scalar.
+            log(line)
+            reached_end |= "Reached end of keyspace" in line
+            speed, total = SPEED.search(line), TOTAL.search(line)
+            if total:
+                candidate_next = start + int(total.group(1).replace(",", ""))
+                if not start <= candidate_next <= end + 1:
+                    raise ValueError("CUDA 进度越界")
+                next_key = max(next_key, candidate_next)
+                progress(next_key, float(speed.group(1)) * 1_000_000 if speed else 0)
+        code = console.exitstatus
+    finally:
+        if console.isalive():
+            os.kill(console.pid, signal.SIGTERM)
+        console.close(force=True)
+        try:
+            console.fileobj.shutdown(2)
+        except OSError:
+            pass
+        console.fileobj.close()
+        console._server.close()
+    scalar = None
+    if found.exists():
+        for line in found.read_text().splitlines():
+            fields = line.split()
+            if len(fields) >= 2 and fields[0] == target:
+                possible = int(fields[1], 16)
+                if start <= possible <= end:
+                    scalar = possible
+                    break
+    if scalar is None and not was_stopped and code != 0:
+        raise RuntimeError("CUDA 引擎未正常结束，将保留已确认进度")
+    if reached_end and code == 0 and scalar is None:
+        next_key = end + 1
+        progress(next_key, 0)
+    return {"next": next_key, "found": scalar, "backend": "CUDA",
+            "found_path": str(found) if scalar is not None else None, "pid": console.pid}
+
+
+def gpu_selftest(directory, stop, log):
+    started = time.monotonic()
+    result = gpu_scan(0x80000, 0xFFFFF, "1HsMJxNiV7TLxmoF6uJNkydxPFDog4NQum",
+        directory, lambda: stop.is_set() or time.monotonic() - started > 45,
+        lambda *_: None, log, (32, 128, 16))
+    if result["found"] != 0xD2C55:
+        raise RuntimeError("CUDA 已解题校验失败；请查看自校验日志")
+    if result.get("found_path"):
+        # This is only the already-public solved-puzzle test answer.
+        Path(result["found_path"]).unlink(missing_ok=True)
+    return True

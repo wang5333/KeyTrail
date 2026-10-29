@@ -1,0 +1,43 @@
+# Runtime and private state
+.local-data/
+.local-*/
+*-data/
+evidence/
+backups/
+research/
+*.sqlite*
+*.db
+*.dpapi
+*.log
+.env
+.env.*
+*.cookie
+config.json
+settings.json
+instance.json
+found*.json
+claim*.json
+*.signed*
+# Development/build artifacts
+.deps/
+.pip-cache/
+.tmp/
+.test-output/
+.test-tools/
+.qa-data/
+.build/
+build/
+dist/
+node_modules/
+__pycache__/
+*.pyc
+*.spec
+# Machine-specific maintenance/QA scripts
+scripts/install-*.py
+scripts/check-*.cjs
+scripts/check-package.py
+scripts/check-gpu-resume.py
+
+ui-instance.json
+webview-cache/
+*.lnk

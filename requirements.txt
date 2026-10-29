@@ -1,0 +1,11 @@
+embit==0.8.0
+pywinpty==2.0.15; sys_platform == "win32"
+pyinstaller==6.12.0
+pywebview==6.2.1; sys_platform == "win32"
+pythonnet==3.2.1; sys_platform == "win32"
+clr_loader==0.3.1; sys_platform == "win32"
+bottle==0.13.4
+proxy_tools==0.1.0
+cffi==2.1.1
+pycparser==3.12
+typing_extensions==4.16.0

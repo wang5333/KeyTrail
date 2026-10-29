@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "puzzle": 71,
+  "kind": "published Bitcoin puzzle transaction",
+  "address": "1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU",
+  "range_start_hex": "400000000000000000",
+  "range_end_hex_inclusive": "7FFFFFFFFFFFFFFFFF",
+  "candidate_count_decimal": "1180591620717411303424",
+  "compression": "compressed",
+  "original_transaction": "08389f34c98c606322740c0be6a7125d9860bb8d5cb182c02f98461e5fa6cd15",
+  "original_output_index_zero_based": 70,
+  "catalog_label": "UNSOLVED",
+  "observed_confirmed_unspent_satoshis": 710195986,
+  "observed_pending_spent_satoshis": 0,
+  "observed_tip_height": 973662,
+  "verified_at_utc": "2026-10-29T08:18:07.729243+00:00",
+  "sources": {
+    "creator_statement": "https://bitcointalk.org/index.php?topic=1306983.msg18765941#msg18765941",
+    "ledger": "https://blockstream.info/api/address/1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU",
+    "catalog": "https://privatekeys.pw/puzzles/bitcoin-puzzle-tx"
+  },
+  "benchmark_keys_per_second": 358710000.0,
+  "ideal_full_sweep_years": 104292.30004683475,
+  "ideal_10_minute_hit_probability": 1.8230351310575404e-10,
+  "assumptions": "Constant benchmark speed, uniform secret within the interval, unique sequential candidates; excludes startup, competition and balance changes.",
+  "search_started": false,
+  "runner_configured": false
+}
