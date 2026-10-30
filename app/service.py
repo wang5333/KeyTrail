@@ -34,6 +34,15 @@ def machine_signature():
                 identity = winreg.QueryValueEx(key, "MachineGuid")[0]
         except OSError:
             pass
+    elif platform.system() == "Linux":
+        for filename in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+            try:
+                value = Path(filename).read_text(encoding="ascii").strip()
+                if value:
+                    identity = value
+                    break
+            except OSError:
+                pass
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
@@ -70,7 +79,11 @@ class Application:
         self.event("info", "软件已就绪。不会随启动自动计算，也不会自动广播领奖交易。")
         if copied:
             self.event("warning", "检测到数据来自另一台电脑：请导入本机独立编号，避免两台电脑重复计算。原进度未删除。")
-        if (self.directory / "private/puzzle71-result.dpapi").exists():
+        if self.claim.foreign_result:
+            self.run_state = "FOUND"
+            self.claim.state.update(state="NEEDS_REVIEW",
+                message="A Windows DPAPI result exists. Use the original Windows account; it cannot be decrypted on Linux.")
+        elif self.claim.result_path.exists():
             self.run_state = "FOUND"
             if self.claim.state["state"]=="NONE":
                 self.claim.state.update(state="FOUND", message="本机已有加密结果，可重新准备待确认交易")

@@ -11,6 +11,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import webbrowser
 
 from .core import APP_ID, ROOT, atomic_json
 
@@ -56,6 +57,10 @@ def restore_existing(directory, url):
 def open_window(url, directory):
     if not valid_local_url(url):
         raise ValueError("Expected a local KeyTrail URL")
+    if os.name != "nt":
+        # Browser mode has no WebView2/.NET/GTK dependency. The backend remains
+        # loopback-only; a server can use --no-browser and an SSH local tunnel.
+        return webbrowser.open(url, new=2)
     if os.name == "nt" and restore_existing(directory, url):
         return
     command = ([sys.executable] if getattr(sys, "frozen", False)

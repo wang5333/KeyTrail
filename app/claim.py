@@ -1,6 +1,4 @@
 """Protected results, explicit opt-in payout authorization, and transaction receipts."""
-import ctypes
-from ctypes import wintypes
 import hashlib
 import json
 import os
@@ -14,33 +12,7 @@ from embit.networks import NETWORKS
 from embit.transaction import Transaction, TransactionInput, TransactionOutput, SIGHASH
 
 from .core import PAYOUT, TARGET, atomic_json, point_address, validate_payout
-
-
-class Blob(ctypes.Structure):
-    _fields_ = [("size", wintypes.DWORD), ("data", ctypes.POINTER(ctypes.c_ubyte))]
-
-
-def protect(data, decrypt=False):
-    if os.name != "nt":
-        raise RuntimeError("本发行版的结果保护使用 Windows 当前用户 DPAPI")
-    buffer = ctypes.create_string_buffer(data)
-    incoming = Blob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte)))
-    outgoing = Blob()
-    crypt32, kernel32 = ctypes.WinDLL("crypt32", use_last_error=True), ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
-    kernel32.LocalFree.restype = ctypes.c_void_p
-    if decrypt:
-        function = crypt32.CryptUnprotectData
-        ok = function(ctypes.byref(incoming), None, None, None, None, 1, ctypes.byref(outgoing))
-    else:
-        function = crypt32.CryptProtectData
-        ok = function(ctypes.byref(incoming), "Puzzle71 local result", None, None, None, 1, ctypes.byref(outgoing))
-    if not ok:
-        raise ctypes.WinError(ctypes.get_last_error())
-    try:
-        return ctypes.string_at(outgoing.data, outgoing.size)
-    finally:
-        kernel32.LocalFree(outgoing.data)
+from .protection import private_directory, protect, result_path
 
 
 def build_transaction(private_key, utxos, previous_transactions, fee_rate, *, target=TARGET, payout=PAYOUT, max_fee=200_000, chain="main"):
@@ -98,8 +70,10 @@ def build_transaction(private_key, utxos, previous_transactions, fee_rate, *, ta
 
 class Claim:
     def __init__(self, directory, network, event, *, payout=PAYOUT, target=TARGET, chain="main"):
-        self.directory, self.network, self.event = Path(directory), network, event
-        self.directory.mkdir(parents=True, exist_ok=True)
+        self.directory, self.network, self.event = private_directory(directory), network, event
+        self.result_path = result_path(self.directory)
+        self.foreign_result = (os.name != "nt" and not self.result_path.exists()
+                               and (self.directory / "puzzle71-result.dpapi").exists())
         self.lock = threading.RLock()
         self.payout, self.target, self.chain = payout, target, chain
         if payout != "":
@@ -157,10 +131,12 @@ class Claim:
     def save_result(self, scalar):
         if self._address(scalar)!=self.target:
             raise ValueError("Independent puzzle address verification failed")
-        encoded=protect(scalar.to_bytes(32,"big"))
-        path=self.directory/"puzzle71-result.dpapi"
+        encoded=protect(scalar.to_bytes(32,"big"), directory=self.directory)
+        path=self.result_path
         temporary=path.with_suffix(".pending")
         with temporary.open("wb") as stream:
+            if os.name != "nt":
+                os.fchmod(stream.fileno(), 0o600)
             stream.write(encoded);stream.flush();os.fsync(stream.fileno())
         temporary.replace(path)
         with self.lock:
@@ -176,7 +152,7 @@ class Claim:
             payout=self.payout
             authorization=self.authorization
         try:
-            scalar=int.from_bytes(protect((self.directory/"puzzle71-result.dpapi").read_bytes(),True),"big")
+            scalar=int.from_bytes(protect(self.result_path.read_bytes(),True,directory=self.directory),"big")
             if self._address(scalar)!=self.target:
                 raise ValueError("Saved result does not match puzzle")
             utxos=self.network.any_json("/address/"+self.target+"/utxo")
@@ -191,6 +167,8 @@ class Claim:
             path=self.directory/"signed-transaction.txt"
             temp=path.with_suffix(".pending")
             with temp.open("w",encoding="ascii") as stream:
+                if os.name != "nt":
+                    os.fchmod(stream.fileno(), 0o600)
                 stream.write(signed["raw_hex"]);stream.flush();os.fsync(stream.fileno())
             temp.replace(path)
             with self.lock:

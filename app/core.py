@@ -11,7 +11,7 @@ from embit import base58, ec, script
 from embit.networks import NETWORKS
 
 APP_ID = "puzzle71-desk"
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 TARGET = "1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU"
 PAYOUT = ""  # Receiving addresses belong only in each machine's local config.
 START, END = 1 << 70, (1 << 71) - 1

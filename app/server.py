@@ -129,14 +129,15 @@ def make_server(application, port=0):
                             archive.writestr("computer-" + str(config["index"]).zfill(3) + ".json",
                                              json.dumps(config, indent=2, ensure_ascii=False))
                         archive.writestr("README.txt",
-                            "同一套 Puzzle71Desk.exe 放到每台 Windows 10/11 x64 电脑。\n"
-                            "每台导入不同编号的 computer-NNN.json。\n"
-                            "不用公网端口，不用共享私钥；每台独立保存进度。\n"
-                            "同一编号重复使用会重复计算；改变总台数前先停下旧计划。\n")
+                            "Run KeyTrail on each Windows or Linux computer.\n"
+                            "Import a DIFFERENT computer-NNN.json on each machine.\n"
+                            "No inbound ports or shared private keys; progress stays local.\n"
+                            "Reusing a number duplicates work. Stop all machines before changing the plan.\n"
+                            "Share plan files only, never a used data/private directory.\n")
                     self.send(200, output.getvalue(), "application/zip", "puzzle71-computer-configs.zip")
                     return
                 elif path == "/api/claim/prepare":
-                    if not (application.directory / "private/puzzle71-result.dpapi").exists():
+                    if not application.claim.result_path.exists():
                         raise ValueError("本机尚未发现结果")
                     threading.Thread(target=application.claim.prepare, daemon=True).start()
                 elif path == "/api/claim/broadcast":

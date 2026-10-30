@@ -1,4 +1,3 @@
-import hashlib
 import os
 from pathlib import Path
 import queue
@@ -9,9 +8,10 @@ import sys
 import threading
 import time
 
-from embit import base58, ec
+from embit import base58, ec, hashes
 
-from .core import CREATE_NO_WINDOW, ROOT, RUNTIME_HASH, TOOL_HASH, sha256
+from .core import CREATE_NO_WINDOW
+from .cuda import engine_path
 
 P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
 GX = 0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798
@@ -37,17 +37,20 @@ def hardware():
 
 
 def detect_gpu():
-    if os.name != "nt":
-        return {"available": False, "reason": "此发行版仅打包 Windows CUDA 引擎"}
-    tool, runtime = ROOT / "vendor/cuBitCrack.exe", ROOT / "vendor/cudart64_101.dll"
-    if not tool.exists() or not runtime.exists() or sha256(tool) != TOOL_HASH or sha256(runtime) != RUNTIME_HASH:
-        return {"available": False, "reason": "CUDA 引擎文件缺失或校验不匹配"}
+    try:
+        tool = engine_path()
+    except (OSError, RuntimeError) as error:
+        return {"available": False, "reason": str(error)}
     try:
         p = subprocess.run([str(tool), "--list-devices"], capture_output=True, text=True,
                            timeout=8, creationflags=CREATE_NO_WINDOW)
         if p.returncode or "ID:" not in p.stdout:
             return {"available": False, "reason": "未找到兼容 CUDA 设备；将使用 CPU"}
-        return {"available": True, "details": p.stdout.strip(), **hardware()}
+        # nvidia-smi telemetry is optional and must not override successful
+        # CUDA device detection (headless installations may not include it).
+        telemetry = hardware()
+        telemetry.pop("available", None)
+        return {**telemetry, "available": True, "details": p.stdout.strip()}
     except (OSError, subprocess.TimeoutExpired):
         return {"available": False, "reason": "CUDA 检测未完成；将使用 CPU"}
 
@@ -71,7 +74,9 @@ def cpu_scan(start, end, target, should_stop, progress):
     scalar, last_key, last_time = start, start, time.monotonic()
     while scalar <= end:
         public_key = bytes([2 | (y & 1)]) + x.to_bytes(32, "big")
-        candidate_hash = hashlib.new("ripemd160", hashlib.sha256(public_key).digest()).digest()
+        # embit supplies a RIPEMD-160 fallback when OpenSSL 3 does not expose
+        # the legacy provider (notably minimal Ubuntu 22.04 installations).
+        candidate_hash = hashes.hash160(public_key)
         if candidate_hash == target_hash:
             return {"next": scalar, "found": scalar, "backend": "CPU"}
         scalar += 1
@@ -90,17 +95,22 @@ def cpu_scan(start, end, target, should_stop, progress):
 
 
 def gpu_scan(start, end, target, directory, should_stop, progress, log, parameters=(64, 128, 128)):
-    from winpty import PtyProcess
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     found = directory / ("candidate-" + str(time.time_ns()) + ".found.txt")
     b, t, points = parameters
-    command = [str(ROOT / "vendor/cuBitCrack.exe"), "-d", "0", "-b", str(b), "-t", str(t),
+    command = [str(engine_path()), "-d", "0", "-b", str(b), "-t", str(t),
                "-p", str(points), "-c", "-f", "--keyspace", f"{start:X}:{end:X}",
                "-o", str(found), target]
-    console = PtyProcess.spawn(command, cwd=str(directory), dimensions=(30, 240))
-    pending, exited = queue.Queue(), None
+    if os.name == "nt":
+        from winpty import PtyProcess
+        console = PtyProcess.spawn(command, cwd=str(directory), dimensions=(30, 240))
+    else:
+        from .terminal import PosixTerminal
+        console = PosixTerminal(command, str(directory))
+    pending, exited, code = queue.Queue(), None, None
     next_key, reached_end, was_stopped = start, False, False
+    stop_started = None
 
     def reader():
         buffer = ""
@@ -123,9 +133,18 @@ def gpu_scan(start, end, target, directory, should_stop, progress, log, paramete
     try:
         while True:
             alive = console.isalive()
-            if alive and should_stop():
+            if alive and not was_stopped and should_stop():
                 was_stopped = True
-                os.kill(console.pid, signal.SIGTERM)
+                stop_started = time.monotonic()
+                try:
+                    os.kill(console.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            if alive and os.name != "nt" and stop_started and time.monotonic() - stop_started > 3:
+                try:
+                    os.killpg(console.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             if not alive:
                 if exited is None:
                     exited = time.monotonic()
@@ -149,15 +168,20 @@ def gpu_scan(start, end, target, directory, should_stop, progress, log, paramete
                 progress(next_key, float(speed.group(1)) * 1_000_000 if speed else 0)
         code = console.exitstatus
     finally:
-        if console.isalive():
-            os.kill(console.pid, signal.SIGTERM)
-        console.close(force=True)
-        try:
-            console.fileobj.shutdown(2)
-        except OSError:
-            pass
-        console.fileobj.close()
-        console._server.close()
+        if os.name == "nt":
+            if console.isalive():
+                os.kill(console.pid, signal.SIGTERM)
+            console.close(force=True)
+            try:
+                console.fileobj.shutdown(2)
+            except OSError:
+                pass
+            console.fileobj.close()
+            console._server.close()
+        else:
+            console.close()
+        if code is None and os.name != "nt":
+            code = console.exitstatus
     scalar = None
     if found.exists():
         for line in found.read_text().splitlines():

@@ -44,6 +44,7 @@ function renderClaim(){
  $('auto-details').classList.toggle('hidden',!$('auto-receive').checked||!!c.auto_armed&&!payoutDirty);
 }
 function render(s){
+ $('app-version').textContent='v'+s.version;
  $('page-work').dataset.runState=s.run_state;
  state=s;const r=s.keys_per_second;
  if(r>=1e6){$('rate-value').textContent=(r/1e6).toLocaleString(I.language,{minimumFractionDigits:2,maximumFractionDigits:2});$('rate-unit').textContent=t('unit.mkeys')}

@@ -312,11 +312,12 @@ class ClaimTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_transaction(2, utxos, previous, 1, target=point_address(1), payout=PAYOUT)
 
-    def test_dpapi_roundtrip(self):
+    def test_native_protection_roundtrip(self):
         secret = bytes(range(32))
-        protected = protect(secret)
-        self.assertNotEqual(protected, secret)
-        self.assertEqual(protect(protected, True), secret)
+        with tempfile.TemporaryDirectory(dir=TEST_OUTPUT) as d:
+            protected = protect(secret, directory=d)
+            self.assertNotEqual(protected, secret)
+            self.assertEqual(protect(protected, True, directory=d), secret)
 
     def test_broadcast_requires_explicit_confirmation(self):
         with tempfile.TemporaryDirectory(dir=TEST_OUTPUT) as d:

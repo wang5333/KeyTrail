@@ -8,6 +8,13 @@ research/
 *.sqlite*
 *.db
 *.dpapi
+*.aesgcm
+result-protection.key
+*.found.txt
+instance.lock
+transaction-review.json
+signed-transaction.txt
+.venv/
 *.log
 .env
 .env.*

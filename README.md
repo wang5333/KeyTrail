@@ -1,6 +1,6 @@
 # KeyTrail · 钥迹
 
-A portable Windows x64 workbench for the public **Bitcoin Puzzle #71**. Graphite header, warm-white workspace, live device throughput, explicit run state. English by default; English / 简体中文 / 繁體中文 / 日本語 / Español are available from the top-right selector.
+A Windows and Linux x64 workbench for the public **Bitcoin Puzzle #71**. Graphite header, warm-white workspace, live device throughput, explicit run state. English by default; English / 简体中文 / 繁體中文 / 日本語 / Español are available from the top-right selector.
 
 ## Download and run
 
@@ -8,12 +8,26 @@ Download the Windows x64 ZIP from **[Releases](https://github.com/wang5333/KeyTr
 
 Nothing starts searching on launch. Automatic payout is off until explicitly authorized for the current session.
 
+### Linux (v1.4.0)
+
+Linux uses the same workbench in your local browser, or headless mode with an
+SSH local tunnel. CPU fallback is included; native NVIDIA CUDA is optional.
+See **[LINUX.md](LINUX.md)** for portable ELF startup, source installation,
+native CUDA setup, data protection and build commands. The release targets
+Linux x86_64 with glibc 2.35+ (Ubuntu 22.04+), not Alpine/musl or ARM64.
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-linux.txt
+bash scripts/run-linux.sh
+```
+
 ## Features
 
 - Fixed public challenge #71; an inclusive hexadecimal subrange, four-quarter presets, or resume from a saved checkpoint.
 - Saved searches and **local unique keyspace coverage**. Overlapping local search prefixes count once; this is not an aggregate across all computers.
 - Numbered, disjoint plans for computers on different networks. No central service or inbound network port is needed.
-- NVIDIA CUDA on the first compatible GPU; single-thread CPU fallback. Actual throughput, temperature, run time and stop/save controls. Temperature protection at 82°C when telemetry is available.
+- NVIDIA CUDA on the first compatible GPU (Windows bundled engine; Linux native engine setup in LINUX.md); single-thread CPU fallback. Actual throughput, temperature, run time and stop/save controls. Temperature protection at 82°C when telemetry is available.
 - Public prize-output monitoring approximately every 30 seconds through Blockstream and mempool.space. Pending spends, confirmed spends, network errors and dust are distinguished. A secret found offline is not observable until a transaction appears.
 - Approximate USD prize value, refreshed about every five minutes, with unavailable/stale states. It does not influence fees or computation.
 - Editable Bitcoin **mainnet** receiving address, including Taproot and SegWit. No wallet seed phrase or receiving-wallet private key is requested.
@@ -23,13 +37,13 @@ Nothing starts searching on launch. Automatic payout is off until explicitly aut
 1. On **Ranges / 区间**, choose the desired bounded range and number of computers. Export one plan and import a different `computer-NNN.json` on each machine.
 2. On **Results / 结果**, verify or change the receiving address. New installations have no prefilled receiving address. Enter your own address locally; it is not embedded in the software or uploaded to this repository.
 3. On **Search / 搜索**, check the device, assigned range and public-prize state, then choose a duration and start. Stop & save preserves the last confirmed prefix.
-4. Closing the browser window leaves the backend running. Use the notification-area menu or the page's Quit button to exit.
+4. Closing the browser window leaves the backend running. Use the Windows notification-area menu or the page's Quit button to exit. On Linux, Ctrl+C / SIGTERM also stops and saves gracefully; there is no Linux tray icon.
 
-Distribute the EXE and **different numbered plan files**, not an already-used data directory. Stop all machines before changing a multi-computer plan. These are static allocations, not a synchronized search pool; using the same plan number on two machines duplicates work.
+Distribute the executable and **different numbered plan files**, not an already-used data directory. Windows and Linux machines can use the same plan format. Stop all machines before changing a multi-computer plan. These are static allocations, not a synchronized search pool; using the same plan number on two machines duplicates work.
 
 ## Payout behavior
 
-A match is independently verified and saved with Windows current-user DPAPI. The original outputs, destination, amount and signatures are checked before building a transaction. DPAPI files depend on the original Windows user and machine; copying them is not a recovery procedure.
+A match is independently verified and saved with Windows current-user DPAPI, or Linux AES-256-GCM with an owner-only local key file. The original outputs, destination, amount and signatures are checked before building a transaction. DPAPI files depend on the original Windows user and machine; copying them is not a recovery procedure. Linux protection is not an OS keyring: back up the entire private directory encrypted and keep it private; possession of both key and ciphertext permits decryption. See LINUX.md for the precise threat model.
 
 Default mode is manual. Automatic submission requires the full receiving address, a public-broadcast risk acknowledgment and an explicit Save. The grant is bound to that address and this process; restart, plan import or switching plans clears it. Existing saved results are not automatically sent on launch. The fee ceiling is **200,000 sat**.
 
@@ -39,7 +53,12 @@ A returned transaction ID is only **submitted**, not confirmed. An ambiguous res
 
 ## Data and upgrades
 
-The legacy internal ID and data-folder names are intentionally unchanged: `Puzzle71Desk-data` next to the EXE, with `%LOCALAPPDATA%/Puzzle71Desk` fallback. Source runs default to `.local-data`; `--data-dir` overrides it. Keep the existing folder when upgrading. Back up private results and data separately; never upload them to the repository.
+The legacy internal ID and Windows data-folder names are intentionally unchanged: `Puzzle71Desk-data` next to the EXE, with `%LOCALAPPDATA%/Puzzle71Desk` fallback. Windows source runs default to `.local-data`; `--data-dir` overrides it. Keep the existing folder when upgrading. Back up private results and data separately; never upload them to the repository.
+
+On Linux, both source and portable runs use `$XDG_DATA_HOME/KeyTrail` or
+`~/.local/share/KeyTrail`; `--data-dir` overrides it. Existing Windows data is
+not moved or rewritten. Linux has an independent instance lock and encryption
+format; copied DPAPI results stop the run for review.
 
 v1.3.0 removes the system title bar and uses an embedded WebView2 window with integrated minimize/maximize/close controls. Drag the blank graphite header area to move it; double-click there to maximize/restore. Closing the window keeps the backend in the tray, as before. New installations have an empty receiving address and require one before search; existing local addresses, checkpoints and schema-1 plans remain compatible. Addresses are local configuration, never a compiled-in default. Already-saved language preferences remain; new installations default to English.
 
@@ -62,9 +81,12 @@ The output is `dist/KeyTrail.exe`. For a source-mode UI: `python main.py`. Final
 .\dist\KeyTrail.exe --self-test-payout --data-dir .test-output/payout
 ```
 
-CUDA self-test reproduces solved puzzle #20, not #71. Payout self-test uses offline fictional outputs. The 43 unit tests exercise checkpoint recovery, range partitions, host/origin protections, receipt handling and explicit payout authorization. For isolated node integration testing, put Bitcoin Core 32.1 at `.test-tools/bitcoin-core-32.1/bitcoin-32.1/bin/bitcoind.exe` then run `python scripts/check-regtest.py`; it creates a regtest node with no peer connections and stops it afterward.
+CUDA self-test reproduces solved puzzle #20, not #71. Payout self-test uses offline fictional outputs. The test suite exercises checkpoint recovery, range partitions, host/origin protections, receipt handling, explicit payout authorization and Linux platform behavior. For isolated Windows node integration testing, put Bitcoin Core 32.1 at `.test-tools/bitcoin-core-32.1/bitcoin-32.1/bin/bitcoind.exe` then run `python scripts/check-regtest.py`; it creates a regtest node with no peer connections and stops it afterward.
 
-See [DESIGN.md](DESIGN.md), [PRODUCT.md](PRODUCT.md) and [verification/v1.3.0.md](verification/v1.3.0.md). Validation on this development machine is not a claim of testing every Windows computer or GPU.
+See [DESIGN.md](DESIGN.md), [PRODUCT.md](PRODUCT.md), [LINUX.md](LINUX.md),
+[verification/v1.3.0.md](verification/v1.3.0.md) and
+[verification/v1.4.0.md](verification/v1.4.0.md). Validation on this development
+machine is not a claim of testing every computer, Linux distribution or GPU.
 
 ## Upstream and notices
 
@@ -73,4 +95,8 @@ See [DESIGN.md](DESIGN.md), [PRODUCT.md](PRODUCT.md) and [verification/v1.3.0.md
 - [embit](https://github.com/diybitcoinhardware/embit) — Bitcoin serialization and signing.
 - [Impeccable](https://github.com/pbakaus/impeccable) — design guidance read and applied to this workbench, not a claim of using its detector or copying its website.
 
-Third-party license notices accompany the portable ZIP and are embedded in the EXE. CUDA runtime terms are included separately. No license grant for first-party code is declared in this private repository.
+Third-party license notices accompany the portable packages and are embedded in
+the frozen executables. CUDA runtime terms are included separately. Linux adds
+cryptography (Apache-2.0/BSD), with its dependency notices included by the Linux
+builder. This repository currently declares no first-party open-source license;
+public visibility alone is not a license grant.

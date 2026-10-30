@@ -46,7 +46,7 @@ def main():
     arguments += ["--hidden-import", "clr", "--hidden-import", "webview.platforms.winforms", "--hidden-import", "webview.platforms.edgechromium"]
     for folder in ("web", "resources", "vendor"):
         arguments += ["--add-data", str(ROOT/folder)+";"+folder]
-    for module in ("torch", "numpy", "matplotlib", "tkinter", "PIL", "scipy", "pandas", "pytest"):
+    for module in ("torch", "numpy", "matplotlib", "tkinter", "PIL", "scipy", "pandas", "pytest", "cryptography"):
         arguments += ["--exclude-module", module]
     run(arguments+[str(ROOT/"main.py")])
     executable=ROOT/("dist/"+build_name+".exe")
